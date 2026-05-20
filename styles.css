@@ -250,6 +250,51 @@ h2 {
   color: #fffdf8;
 }
 
+.online-panel {
+  display: grid;
+  gap: 12px;
+}
+
+.room-code {
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 9px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-weight: 800;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.online-detail {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.45;
+}
+
+.online-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.online-actions button {
+  min-height: 40px;
+  border-radius: 7px;
+  background: #171717;
+  color: #fffdf8;
+  font-weight: 800;
+}
+
+.online-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
 .status-panel h2 {
   margin-top: 6px;
   font-size: 1.55rem;

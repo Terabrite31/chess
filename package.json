@@ -1,0 +1,8 @@
+{
+  "name": "chess",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "chess.js": "^1.0.0"
+  }
+}

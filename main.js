@@ -11,6 +11,10 @@ const moveListEl = document.querySelector("#moveList");
 const resetButton = document.querySelector("#resetButton");
 const flipButton = document.querySelector("#flipButton");
 const promotionDialog = document.querySelector("#promotionDialog");
+const onlineButton = document.querySelector("#onlineButton");
+const copyLinkButton = document.querySelector("#copyLinkButton");
+const roomCodeEl = document.querySelector("#roomCode");
+const onlineDetailEl = document.querySelector("#onlineDetail");
 
 const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const pieceSymbols = {
@@ -40,7 +44,10 @@ let game = new Chess();
 let selectedSquare = null;
 let legalMoves = [];
 let flipped = false;
-let captures = { w: [], b: [] };
+let onlineGame = null;
+let playerToken = null;
+let pollTimer = null;
+let pollInFlight = false;
 
 function squareName(row, col) {
   const rank = 8 - row;
@@ -130,12 +137,16 @@ function updateStatus() {
     return;
   }
 
-  statusTextEl.textContent = `${turn} to move`;
+  statusTextEl.textContent = onlineGame && onlineGame.color === game.turn() ? "Your move" : `${turn} to move`;
   detailTextEl.textContent = game.isCheck()
     ? `${turn} is in check.`
     : selectedSquare
       ? `${selectedSquare} selected. Choose a highlighted destination.`
-      : `Select a ${turn.toLowerCase()} piece.`;
+      : onlineGame && onlineGame.color && onlineGame.color !== game.turn()
+        ? "Waiting for your opponent."
+      : onlineGame && !onlineGame.color
+        ? "Spectating this game."
+        : `Select a ${turn.toLowerCase()} piece.`;
 }
 
 function drawReason() {
@@ -152,12 +163,26 @@ function drawReason() {
 }
 
 function renderCaptures() {
+  const captures = capturedPieces();
+
   whiteCapturesEl.textContent = sortCaptured(captures.w)
     .map((piece) => pieceSymbols[`b${piece}`])
     .join(" ");
   blackCapturesEl.textContent = sortCaptured(captures.b)
     .map((piece) => pieceSymbols[`w${piece}`])
     .join(" ");
+}
+
+function capturedPieces() {
+  return game.history({ verbose: true }).reduce(
+    (taken, move) => {
+      if (move.captured) {
+        taken[move.color].push(move.captured);
+      }
+      return taken;
+    },
+    { w: [], b: [] },
+  );
 }
 
 function sortCaptured(pieces) {
@@ -180,9 +205,44 @@ function render() {
   updateStatus();
   renderCaptures();
   renderMoveHistory();
+  renderOnline();
+}
+
+function renderOnline() {
+  if (!onlineGame) {
+    roomCodeEl.textContent = "Local";
+    onlineDetailEl.textContent = "Play locally or create a room to invite someone.";
+    onlineButton.textContent = "Create room";
+    copyLinkButton.disabled = true;
+    return;
+  }
+
+  const side = onlineGame.color === "w" ? "White" : onlineGame.color === "b" ? "Black" : "Spectator";
+  const opponentJoined = onlineGame.color === "w" ? onlineGame.players.black : onlineGame.players.white;
+  const waiting = !opponentJoined ? " Waiting for the other player." : "";
+
+  roomCodeEl.textContent = onlineGame.id;
+  onlineDetailEl.textContent = `Room ${onlineGame.id}. You are ${side}.${waiting}`;
+  onlineButton.textContent = "Leave room";
+  copyLinkButton.disabled = false;
+}
+
+function canMoveCurrentTurn() {
+  if (!onlineGame) {
+    return true;
+  }
+
+  return onlineGame.color === game.turn();
 }
 
 function selectSquare(square) {
+  if (!canMoveCurrentTurn()) {
+    selectedSquare = null;
+    legalMoves = [];
+    render();
+    return;
+  }
+
   const piece = game.get(square);
 
   if (!piece || piece.color !== game.turn()) {
@@ -199,7 +259,7 @@ function selectSquare(square) {
 
 async function handleSquareClick(event) {
   const squareEl = event.target.closest("[data-square]");
-  if (!squareEl || game.isGameOver()) {
+  if (!squareEl || game.isGameOver() || !canMoveCurrentTurn()) {
     return;
   }
 
@@ -224,17 +284,16 @@ async function handleSquareClick(event) {
   }
 
   const promotion = legalMove.flags.includes("p") ? await choosePromotion() : undefined;
-  makeMove(selectedSquare, targetSquare, promotion);
+  await makeMove(selectedSquare, targetSquare, promotion);
 }
 
-function makeMove(from, to, promotion) {
-  const movedBy = game.turn();
-  const move = game.move({ from, to, promotion });
-
-  if (move?.captured) {
-    captures[movedBy].push(move.captured);
+async function makeMove(from, to, promotion) {
+  if (onlineGame) {
+    await sendOnlineMove(from, to, promotion);
+    return;
   }
 
+  game.move({ from, to, promotion });
   selectedSquare = null;
   legalMoves = [];
   render();
@@ -260,11 +319,147 @@ function choosePromotion() {
   });
 }
 
+function loadOnlineGame(nextGame) {
+  onlineGame = nextGame;
+  game = new Chess();
+  if (nextGame.pgn) {
+    game.loadPgn(nextGame.pgn);
+  }
+  selectedSquare = null;
+  legalMoves = [];
+  render();
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.error ?? "Request failed.");
+  }
+
+  return data;
+}
+
+function storedToken(id) {
+  return localStorage.getItem(`chess:${id}:token`);
+}
+
+function storeToken(id, token) {
+  localStorage.setItem(`chess:${id}:token`, token);
+}
+
+function shareUrl(id) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("game", id);
+  url.searchParams.delete("token");
+  return url.toString();
+}
+
+function playerUrl(id, token) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("game", id);
+  url.searchParams.set("token", token);
+  return url.toString();
+}
+
+function setRoomUrl(id, token) {
+  window.history.replaceState({}, "", playerUrl(id, token));
+}
+
+async function createOnlineGame() {
+  const { game: createdGame, token } = await api("/api/games?action=create", { method: "POST" });
+  playerToken = token;
+  storeToken(createdGame.id, token);
+  setRoomUrl(createdGame.id, token);
+  loadOnlineGame(createdGame);
+  startPolling();
+}
+
+async function joinOnlineGame(id, token = storedToken(id)) {
+  if (token) {
+    const { game: currentGame } = await api(`/api/games?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`);
+    playerToken = token;
+    storeToken(id, token);
+    setRoomUrl(id, token);
+    loadOnlineGame(currentGame);
+    startPolling();
+    return;
+  }
+
+  const { game: joinedGame, token: joinedToken } = await api("/api/games?action=join", {
+    method: "POST",
+    body: JSON.stringify({ id }),
+  });
+
+  playerToken = joinedToken;
+  storeToken(id, joinedToken);
+  setRoomUrl(id, joinedToken);
+  loadOnlineGame(joinedGame);
+  startPolling();
+}
+
+async function sendOnlineMove(from, to, promotion) {
+  try {
+    const { game: nextGame } = await api("/api/games?action=move", {
+      method: "POST",
+      body: JSON.stringify({ id: onlineGame.id, token: playerToken, from, to, promotion }),
+    });
+    loadOnlineGame(nextGame);
+  } catch (error) {
+    detailTextEl.textContent = error.message;
+    await pollOnlineGame();
+  }
+}
+
+async function pollOnlineGame() {
+  if (!onlineGame || !playerToken || pollInFlight) {
+    return;
+  }
+
+  pollInFlight = true;
+  try {
+    const { game: nextGame } = await api(
+      `/api/games?id=${encodeURIComponent(onlineGame.id)}&token=${encodeURIComponent(playerToken)}`,
+    );
+    if (nextGame.updatedAt !== onlineGame.updatedAt || nextGame.players.black !== onlineGame.players.black) {
+      loadOnlineGame(nextGame);
+    }
+  } catch (error) {
+    onlineDetailEl.textContent = error.message;
+  } finally {
+    pollInFlight = false;
+  }
+}
+
+function startPolling() {
+  window.clearInterval(pollTimer);
+  pollTimer = window.setInterval(pollOnlineGame, 1800);
+}
+
+function stopPolling() {
+  window.clearInterval(pollTimer);
+  pollTimer = null;
+}
+
+function leaveOnlineGame() {
+  stopPolling();
+  onlineGame = null;
+  playerToken = null;
+  const url = new URL(window.location.href);
+  url.searchParams.delete("game");
+  url.searchParams.delete("token");
+  window.history.replaceState({}, "", url.toString());
+  resetGame();
+}
+
 function resetGame() {
   game = new Chess();
   selectedSquare = null;
   legalMoves = [];
-  captures = { w: [], b: [] };
   render();
 }
 
@@ -273,8 +468,61 @@ function flipBoard() {
   render();
 }
 
+async function handleOnlineButton() {
+  try {
+    if (onlineGame) {
+      leaveOnlineGame();
+      return;
+    }
+
+    await createOnlineGame();
+  } catch (error) {
+    onlineDetailEl.textContent = error.message;
+  }
+}
+
+async function copyShareLink() {
+  if (!onlineGame) {
+    return;
+  }
+
+  const link = shareUrl(onlineGame.id);
+  try {
+    await navigator.clipboard.writeText(link);
+    onlineDetailEl.textContent = `Invite link copied. You are ${onlineGame.color === "w" ? "White" : "Black"}.`;
+  } catch {
+    onlineDetailEl.textContent = link;
+  }
+}
+
+async function bootFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const id = params.get("game");
+  const token = params.get("token");
+
+  if (!id) {
+    return;
+  }
+
+  try {
+    await joinOnlineGame(id, token);
+  } catch (error) {
+    onlineDetailEl.textContent = error.message;
+    render();
+  }
+}
+
 boardEl.addEventListener("click", handleSquareClick);
-resetButton.addEventListener("click", resetGame);
+resetButton.addEventListener("click", () => {
+  if (onlineGame) {
+    leaveOnlineGame();
+    return;
+  }
+  resetGame();
+});
 flipButton.addEventListener("click", flipBoard);
+onlineButton.addEventListener("click", handleOnlineButton);
+copyLinkButton.addEventListener("click", copyShareLink);
 
 render();
+bootFromUrl();

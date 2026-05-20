@@ -31,6 +31,18 @@
       </section>
 
       <aside class="side-panel" aria-label="Game details">
+        <section class="online-panel">
+          <div class="panel-heading">
+            <h2>Online</h2>
+            <span class="room-code" id="roomCode">Local</span>
+          </div>
+          <p class="online-detail" id="onlineDetail">Play locally or create a room to invite someone.</p>
+          <div class="online-actions">
+            <button id="onlineButton" type="button">Create room</button>
+            <button id="copyLinkButton" type="button" disabled>Copy link</button>
+          </div>
+        </section>
+
         <section class="status-panel">
           <p class="panel-label">Status</p>
           <h2 id="statusText">White to move</h2>
