@@ -26,6 +26,8 @@ DB_PATH="./data/signaldesk-db.json"
 
 `EMAIL_FROM` must be a sender/domain verified in Resend. Without `RESEND_API_KEY`, verification links are returned in the browser for local development.
 
+If your Resend account is still in testing mode, Resend only sends to the email address on your Resend account. To send verification emails to Gmail addresses used by other signups, verify a domain in Resend and set `EMAIL_FROM` to an address on that verified domain. During local development, the app will still show a verification link if Resend rejects the send.
+
 ## API
 
 - `POST /api/auth?action=register`

@@ -113,6 +113,11 @@ function verifyUrl(request, verifyToken) {
   return url.toString();
 }
 
+function localRequest(request) {
+  const host = request.headers.host ?? "";
+  return host.startsWith("localhost:") || host.startsWith("127.0.0.1:");
+}
+
 async function sendVerificationEmail(request, user) {
   const verifyToken = token();
   const verificationUrl = verifyUrl(request, verifyToken);
@@ -146,7 +151,11 @@ async function sendVerificationEmail(request, user) {
 
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));
-    throw new Error(data.message ?? "Could not send verification email.");
+    const message = data.message ?? "Could not send verification email.";
+    if (localRequest(request)) {
+      return { sent: false, verificationUrl, warning: message };
+    }
+    throw new Error(message);
   }
 
   return { sent: true };
@@ -199,9 +208,11 @@ async function handleRegister(request, response) {
 
   send(response, 201, {
     user: publicUser(user),
-    message: emailResult.sent
-      ? "Check your email to verify your account."
-      : "Dev mode: open the verification link to finish registration.",
+    message: emailResult.warning
+      ? `Email was not sent: ${emailResult.warning} Open the verification link to finish registration.`
+      : emailResult.sent
+        ? "Check your email to verify your account."
+        : "Dev mode: open the verification link to finish registration.",
     verificationUrl: emailResult.verificationUrl,
   });
 }
@@ -292,7 +303,11 @@ async function handleResend(request, response) {
 
   const emailResult = await sendVerificationEmail(request, user);
   send(response, 200, {
-    message: emailResult.sent ? "Verification email sent." : "Dev mode: open the verification link.",
+    message: emailResult.warning
+      ? `Email was not sent: ${emailResult.warning} Open the verification link.`
+      : emailResult.sent
+        ? "Verification email sent."
+        : "Dev mode: open the verification link.",
     verificationUrl: emailResult.verificationUrl,
   });
 }
