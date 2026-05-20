@@ -1,4 +1,5 @@
 import { Chess } from "chess.js";
+import { currentUser } from "./auth.js";
 import { readGame, writeGame } from "./_store.js";
 
 function send(response, status, body) {
@@ -31,7 +32,7 @@ function publicGame(game, playerToken) {
   };
 }
 
-function createGame() {
+function createGame(user) {
   const chess = new Chess();
   const now = new Date().toISOString();
 
@@ -43,13 +44,19 @@ function createGame() {
       w: token(),
       b: null,
     },
+    owner: user.email,
     createdAt: now,
     updatedAt: now,
   };
 }
 
 async function handleCreate(request, response) {
-  const game = createGame();
+  const user = await requireUser(request, response);
+  if (!user) {
+    return;
+  }
+
+  const game = createGame(user);
   await writeGame(game);
 
   send(response, 201, {
@@ -69,6 +76,11 @@ async function handleRead(request, response) {
 }
 
 async function handleJoin(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) {
+    return;
+  }
+
   const { id, token: playerToken } = request.body ?? {};
   const game = await readGame(String(id ?? ""));
 
@@ -98,6 +110,11 @@ async function handleJoin(request, response) {
 }
 
 async function handleMove(request, response) {
+  const user = await requireUser(request, response);
+  if (!user) {
+    return;
+  }
+
   const { id, token: playerToken, from, to, promotion } = request.body ?? {};
   const game = await readGame(String(id ?? ""));
 
@@ -134,6 +151,16 @@ async function handleMove(request, response) {
   await writeGame(game);
 
   send(response, 200, { game: publicGame(game, playerToken), move });
+}
+
+async function requireUser(request, response) {
+  const user = await currentUser(request);
+  if (!user) {
+    send(response, 401, { error: "Sign in with a verified account first." });
+    return null;
+  }
+
+  return user;
 }
 
 export default async function handler(request, response) {

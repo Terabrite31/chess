@@ -15,6 +15,18 @@ const onlineButton = document.querySelector("#onlineButton");
 const copyLinkButton = document.querySelector("#copyLinkButton");
 const roomCodeEl = document.querySelector("#roomCode");
 const onlineDetailEl = document.querySelector("#onlineDetail");
+const authForm = document.querySelector("#authForm");
+const emailInput = document.querySelector("#emailInput");
+const passwordInput = document.querySelector("#passwordInput");
+const loginButton = document.querySelector("#loginButton");
+const registerButton = document.querySelector("#registerButton");
+const logoutButton = document.querySelector("#logoutButton");
+const resendButton = document.querySelector("#resendButton");
+const authBadge = document.querySelector("#authBadge");
+const authUser = document.querySelector("#authUser");
+const authEmail = document.querySelector("#authEmail");
+const authDetail = document.querySelector("#authDetail");
+const verificationLink = document.querySelector("#verificationLink");
 
 const files = ["a", "b", "c", "d", "e", "f", "g", "h"];
 const pieceSymbols = {
@@ -48,6 +60,8 @@ let onlineGame = null;
 let playerToken = null;
 let pollTimer = null;
 let pollInFlight = false;
+let currentUser = null;
+let pendingVerificationEmail = "";
 
 function squareName(row, col) {
   const rank = 8 - row;
@@ -206,6 +220,25 @@ function render() {
   renderCaptures();
   renderMoveHistory();
   renderOnline();
+  renderAuth();
+}
+
+function renderAuth() {
+  authBadge.textContent = currentUser ? "Verified" : "Guest";
+  authForm.hidden = Boolean(currentUser);
+  authUser.hidden = !currentUser;
+  resendButton.hidden = !pendingVerificationEmail || Boolean(currentUser);
+
+  if (currentUser) {
+    authEmail.textContent = currentUser.email;
+    authDetail.textContent = "You can create and join online rooms.";
+    verificationLink.hidden = true;
+    return;
+  }
+
+  if (!authDetail.textContent) {
+    authDetail.textContent = "Sign in to create or join online rooms.";
+  }
 }
 
 function renderOnline() {
@@ -333,6 +366,7 @@ function loadOnlineGame(nextGame) {
 async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
     ...options,
   });
   const data = await response.json().catch(() => ({}));
@@ -342,6 +376,111 @@ async function api(path, options = {}) {
   }
 
   return data;
+}
+
+async function authApi(action, body) {
+  return api(`/api/auth?action=${encodeURIComponent(action)}`, {
+    method: "POST",
+    body: JSON.stringify(body ?? {}),
+  });
+}
+
+function setAuthMessage(message, verificationUrl) {
+  authDetail.textContent = message;
+
+  if (verificationUrl) {
+    verificationLink.href = verificationUrl;
+    verificationLink.hidden = false;
+    return;
+  }
+
+  verificationLink.hidden = true;
+}
+
+function authPayload() {
+  return {
+    email: emailInput.value,
+    password: passwordInput.value,
+  };
+}
+
+async function refreshSession() {
+  const { user } = await api("/api/auth?action=me");
+  currentUser = user;
+  render();
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  try {
+    loginButton.disabled = true;
+    const { user } = await authApi("login", authPayload());
+    currentUser = user;
+    pendingVerificationEmail = "";
+    passwordInput.value = "";
+    setAuthMessage("Signed in.");
+    render();
+  } catch (error) {
+    setAuthMessage(error.message);
+  } finally {
+    loginButton.disabled = false;
+  }
+}
+
+async function handleRegister() {
+  try {
+    registerButton.disabled = true;
+    const { message, verificationUrl } = await authApi("register", authPayload());
+    pendingVerificationEmail = emailInput.value;
+    passwordInput.value = "";
+    setAuthMessage(message, verificationUrl);
+    render();
+  } catch (error) {
+    setAuthMessage(error.message);
+  } finally {
+    registerButton.disabled = false;
+  }
+}
+
+async function handleLogout() {
+  try {
+    await authApi("logout");
+    currentUser = null;
+    setAuthMessage("Signed out.");
+    render();
+  } catch (error) {
+    setAuthMessage(error.message);
+  }
+}
+
+async function resendVerification() {
+  try {
+    const { message, verificationUrl } = await authApi("resend", { email: pendingVerificationEmail || emailInput.value });
+    setAuthMessage(message, verificationUrl);
+  } catch (error) {
+    setAuthMessage(error.message);
+  }
+}
+
+async function verifyFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const verifyToken = params.get("verify");
+  if (!verifyToken) {
+    return;
+  }
+
+  try {
+    const { message } = await authApi("verify", { token: verifyToken });
+    pendingVerificationEmail = "";
+    setAuthMessage(message);
+  } catch (error) {
+    setAuthMessage(error.message);
+  } finally {
+    params.delete("verify");
+    const url = new URL(window.location.href);
+    url.search = params.toString();
+    window.history.replaceState({}, "", url.toString());
+  }
 }
 
 function storedToken(id) {
@@ -371,6 +510,11 @@ function setRoomUrl(id, token) {
 }
 
 async function createOnlineGame() {
+  if (!currentUser) {
+    onlineDetailEl.textContent = "Sign in with a verified account first.";
+    return;
+  }
+
   const { game: createdGame, token } = await api("/api/games?action=create", { method: "POST" });
   playerToken = token;
   storeToken(createdGame.id, token);
@@ -380,6 +524,11 @@ async function createOnlineGame() {
 }
 
 async function joinOnlineGame(id, token = storedToken(id)) {
+  if (!currentUser) {
+    onlineDetailEl.textContent = "Sign in with a verified account first.";
+    return;
+  }
+
   if (token) {
     const { game: currentGame } = await api(`/api/games?id=${encodeURIComponent(id)}&token=${encodeURIComponent(token)}`);
     playerToken = token;
@@ -505,6 +654,7 @@ async function bootFromUrl() {
   }
 
   try {
+    await refreshSession();
     await joinOnlineGame(id, token);
   } catch (error) {
     onlineDetailEl.textContent = error.message;
@@ -523,6 +673,16 @@ resetButton.addEventListener("click", () => {
 flipButton.addEventListener("click", flipBoard);
 onlineButton.addEventListener("click", handleOnlineButton);
 copyLinkButton.addEventListener("click", copyShareLink);
+authForm.addEventListener("submit", handleLogin);
+registerButton.addEventListener("click", handleRegister);
+logoutButton.addEventListener("click", handleLogout);
+resendButton.addEventListener("click", resendVerification);
 
 render();
-bootFromUrl();
+verifyFromUrl()
+  .then(refreshSession)
+  .then(bootFromUrl)
+  .catch((error) => {
+    authDetail.textContent = error.message;
+    render();
+  });

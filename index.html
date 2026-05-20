@@ -31,6 +31,36 @@
       </section>
 
       <aside class="side-panel" aria-label="Game details">
+        <section class="auth-panel" aria-label="Account">
+          <div class="panel-heading">
+            <h2>Account</h2>
+            <span class="room-code" id="authBadge">Guest</span>
+          </div>
+          <form class="auth-form" id="authForm">
+            <input id="emailInput" name="email" type="email" autocomplete="email" placeholder="Email" required />
+            <input
+              id="passwordInput"
+              name="password"
+              type="password"
+              autocomplete="current-password"
+              placeholder="Password"
+              minlength="8"
+              required
+            />
+            <div class="auth-actions">
+              <button id="loginButton" type="submit">Sign in</button>
+              <button id="registerButton" type="button">Create account</button>
+            </div>
+          </form>
+          <div class="auth-user" id="authUser" hidden>
+            <p id="authEmail"></p>
+            <button id="logoutButton" type="button">Sign out</button>
+          </div>
+          <p class="auth-detail" id="authDetail">Sign in to create or join online rooms.</p>
+          <a class="dev-link" id="verificationLink" href="#" hidden>Open verification link</a>
+          <button class="link-button" id="resendButton" type="button" hidden>Resend verification email</button>
+        </section>
+
         <section class="online-panel">
           <div class="panel-heading">
             <h2>Online</h2>

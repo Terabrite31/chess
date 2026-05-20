@@ -1,5 +1,5 @@
-const memoryStore = globalThis.__chessGames ?? new Map();
-globalThis.__chessGames = memoryStore;
+const memoryStore = globalThis.__chessStore ?? new Map();
+globalThis.__chessStore = memoryStore;
 
 const kvUrl = process.env.KV_REST_API_URL;
 const kvToken = process.env.KV_REST_API_TOKEN;
@@ -30,25 +30,59 @@ async function kv(command, ...args) {
 }
 
 export async function readGame(id) {
-  if (!id) {
+  return readValue(`game:${id}`);
+}
+
+export async function writeGame(game) {
+  await writeValue(`game:${game.id}`, game, 60 * 60 * 24);
+  return game;
+}
+
+export async function readValue(key) {
+  if (!key) {
     return null;
   }
 
   if (hasKv()) {
-    const value = await kv("get", `game:${id}`);
+    const value = await kv("get", key);
     return value ? JSON.parse(value) : null;
   }
 
-  return memoryStore.get(id) ?? null;
-}
-
-export async function writeGame(game) {
-  if (hasKv()) {
-    await kv("set", `game:${game.id}`, JSON.stringify(game), "ex", 60 * 60 * 24);
-    return game;
+  const item = memoryStore.get(key);
+  if (!item) {
+    return null;
   }
 
-  memoryStore.set(game.id, game);
-  return game;
+  if (item.expiresAt && item.expiresAt <= Date.now()) {
+    memoryStore.delete(key);
+    return null;
+  }
+
+  return item.value;
 }
 
+export async function writeValue(key, value, ttlSeconds) {
+  if (hasKv()) {
+    const args = ["set", key, JSON.stringify(value)];
+    if (ttlSeconds) {
+      args.push("ex", ttlSeconds);
+    }
+    await kv(...args);
+    return value;
+  }
+
+  memoryStore.set(key, {
+    value,
+    expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null,
+  });
+  return value;
+}
+
+export async function deleteValue(key) {
+  if (hasKv()) {
+    await kv("del", key);
+    return;
+  }
+
+  memoryStore.delete(key);
+}
