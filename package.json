@@ -1,8 +1,9 @@
 {
-  "name": "chess",
+  "name": "signaldesk-messaging",
   "version": "1.0.0",
   "type": "module",
-  "dependencies": {
-    "chess.js": "^1.0.0"
+  "scripts": {
+    "dev": "node server.js",
+    "start": "node server.js"
   }
 }

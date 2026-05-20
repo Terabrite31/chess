@@ -3,119 +3,132 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Chess</title>
-    <link rel="preconnect" href="https://cdn.jsdelivr.net" />
-    <link rel="stylesheet" href="styles.css" />
+    <title>SignalDesk Messaging</title>
+    <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="app-shell">
-      <section class="game-area" aria-label="Chess game">
-        <div class="top-bar">
+    <main class="shell">
+      <section class="auth-view" id="authView">
+        <div class="auth-panel">
           <div>
-            <p class="eyebrow">Live board</p>
-            <h1>Chess</h1>
+            <p class="eyebrow">SignalDesk</p>
+            <h1>Executive-grade team messaging.</h1>
+            <p class="lede">
+              Secure account verification, searchable teammates, persistent conversations, unread state,
+              and a file-backed local database for development.
+            </p>
           </div>
-          <div class="controls" aria-label="Game controls">
-            <button id="flipButton" type="button" title="Flip board" aria-label="Flip board">
-              <span aria-hidden="true">↻</span>
-            </button>
-            <button id="resetButton" type="button">New game</button>
-          </div>
-        </div>
 
-        <div class="board-wrap">
-          <div class="rank-labels" id="rankLabels" aria-hidden="true"></div>
-          <div class="board" id="board" role="grid" aria-label="Chess board"></div>
-          <div class="file-labels" id="fileLabels" aria-hidden="true"></div>
+          <form class="auth-card" id="authForm">
+            <div class="segmented" role="tablist" aria-label="Authentication mode">
+              <button class="active" type="button" data-mode="login">Sign in</button>
+              <button type="button" data-mode="register">Create account</button>
+            </div>
+
+            <label class="register-only">
+              Name
+              <input autocomplete="name" id="nameInput" placeholder="Ari Morgan" />
+            </label>
+
+            <label>
+              Email
+              <input autocomplete="email" id="emailInput" placeholder="ari@company.com" required type="email" />
+            </label>
+
+            <label>
+              Password
+              <input autocomplete="current-password" id="passwordInput" minlength="8" required type="password" />
+            </label>
+
+            <button class="primary" type="submit" id="authSubmit">Sign in</button>
+            <button class="ghost" type="button" id="resendButton">Resend verification</button>
+            <p class="notice" id="authNotice"></p>
+          </form>
         </div>
       </section>
 
-      <aside class="side-panel" aria-label="Game details">
-        <section class="auth-panel" aria-label="Account">
-          <div class="panel-heading">
-            <h2>Account</h2>
-            <span class="room-code" id="authBadge">Guest</span>
-          </div>
-          <form class="auth-form" id="authForm">
-            <input id="emailInput" name="email" type="email" autocomplete="email" placeholder="Email" required />
-            <input
-              id="passwordInput"
-              name="password"
-              type="password"
-              autocomplete="current-password"
-              placeholder="Password"
-              minlength="8"
-              required
-            />
-            <div class="auth-actions">
-              <button id="loginButton" type="submit">Sign in</button>
-              <button id="registerButton" type="button">Create account</button>
+      <section class="app-view hidden" id="appView">
+        <aside class="sidebar">
+          <div class="brand-row">
+            <div>
+              <p class="eyebrow">SignalDesk</p>
+              <h2>Messages</h2>
             </div>
+            <button class="icon-button" id="newConversationButton" title="New conversation" aria-label="New conversation">+</button>
+          </div>
+
+          <div class="status-strip">
+            <span id="userName">Signed in</span>
+            <button class="text-button" id="logoutButton">Log out</button>
+          </div>
+
+          <div class="search-box">
+            <input id="conversationSearch" placeholder="Search conversations" />
+          </div>
+
+          <div class="conversation-list" id="conversationList"></div>
+        </aside>
+
+        <section class="thread-panel">
+          <header class="thread-header">
+            <div>
+              <p class="eyebrow" id="threadMeta">No conversation selected</p>
+              <h1 id="threadTitle">Choose a thread</h1>
+            </div>
+            <button class="secondary" id="refreshButton">Refresh</button>
+          </header>
+
+          <div class="messages" id="messages"></div>
+
+          <form class="composer" id="messageForm">
+            <textarea id="messageInput" placeholder="Write a focused, high-signal message..." rows="3"></textarea>
+            <button class="primary" type="submit">Send</button>
           </form>
-          <div class="auth-user" id="authUser" hidden>
-            <p id="authEmail"></p>
-            <button id="logoutButton" type="button">Sign out</button>
-          </div>
-          <p class="auth-detail" id="authDetail">Sign in to create or join online rooms.</p>
-          <a class="dev-link" id="verificationLink" href="#" hidden>Open verification link</a>
-          <button class="link-button" id="resendButton" type="button" hidden>Resend verification email</button>
         </section>
-
-        <section class="online-panel">
-          <div class="panel-heading">
-            <h2>Online</h2>
-            <span class="room-code" id="roomCode">Local</span>
-          </div>
-          <p class="online-detail" id="onlineDetail">Play locally or create a room to invite someone.</p>
-          <div class="online-actions">
-            <button id="onlineButton" type="button">Create room</button>
-            <button id="copyLinkButton" type="button" disabled>Copy link</button>
-          </div>
-        </section>
-
-        <section class="status-panel">
-          <p class="panel-label">Status</p>
-          <h2 id="statusText">White to move</h2>
-          <p id="detailText">Select a white piece to begin.</p>
-        </section>
-
-        <section>
-          <div class="panel-heading">
-            <h2>Captured</h2>
-          </div>
-          <div class="captures">
-            <div>
-              <p class="capture-label">White took</p>
-              <div class="capture-row" id="whiteCaptures" aria-label="Pieces captured by white"></div>
-            </div>
-            <div>
-              <p class="capture-label">Black took</p>
-              <div class="capture-row" id="blackCaptures" aria-label="Pieces captured by black"></div>
-            </div>
-          </div>
-        </section>
-
-        <section>
-          <div class="panel-heading">
-            <h2>Moves</h2>
-          </div>
-          <ol class="move-list" id="moveList" aria-label="Move history"></ol>
-        </section>
-      </aside>
+      </section>
     </main>
 
-    <dialog class="promotion-dialog" id="promotionDialog" aria-labelledby="promotionTitle">
-      <form method="dialog">
-        <h2 id="promotionTitle">Promote pawn</h2>
-        <div class="promotion-options">
-          <button value="q" type="submit" aria-label="Promote to queen">♕</button>
-          <button value="r" type="submit" aria-label="Promote to rook">♖</button>
-          <button value="b" type="submit" aria-label="Promote to bishop">♗</button>
-          <button value="n" type="submit" aria-label="Promote to knight">♘</button>
+    <dialog id="composeDialog">
+      <form class="compose-modal" id="composeForm" method="dialog">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">New conversation</p>
+            <h2>Start a thread</h2>
+          </div>
+          <button class="icon-button" type="button" id="closeCompose" aria-label="Close">x</button>
         </div>
+
+        <label>
+          Recipients
+          <input id="peopleSearch" placeholder="Search verified teammates" />
+        </label>
+        <div class="people-results" id="peopleResults"></div>
+        <div class="selected-people" id="selectedPeople"></div>
+
+        <label>
+          Subject
+          <input id="subjectInput" placeholder="Launch review, vendor escalation, hiring loop..." />
+        </label>
+
+        <label>
+          Priority
+          <select id="priorityInput">
+            <option value="normal">Normal</option>
+            <option value="urgent">Urgent</option>
+            <option value="executive">Executive</option>
+          </select>
+        </label>
+
+        <label>
+          Message
+          <textarea id="firstMessageInput" rows="5" placeholder="Write the first message..."></textarea>
+        </label>
+
+        <button class="primary" type="submit">Create thread</button>
+        <p class="notice" id="composeNotice"></p>
       </form>
     </dialog>
 
-    <script type="module" src="main.js"></script>
+    <script type="module" src="/main.js"></script>
   </body>
 </html>

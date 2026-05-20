@@ -1,88 +1,71 @@
-const memoryStore = globalThis.__chessStore ?? new Map();
-globalThis.__chessStore = memoryStore;
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 
-const kvUrl = process.env.KV_REST_API_URL;
-const kvToken = process.env.KV_REST_API_TOKEN;
+const DB_PATH = process.env.DB_PATH
+  ? path.resolve(process.env.DB_PATH)
+  : path.resolve(process.cwd(), "data", "signaldesk-db.json");
 
-function hasKv() {
-  return Boolean(kvUrl && kvToken);
-}
+const seed = {
+  users: [],
+  sessions: [],
+  verifications: [],
+  conversations: [],
+  messages: [],
+};
 
-async function kv(command, ...args) {
-  const response = await fetch(`${kvUrl}/pipeline`, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${kvToken}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify([[command, ...args]]),
-  });
+let writeQueue = Promise.resolve();
 
-  if (!response.ok) {
-    throw new Error(`KV ${command} failed with ${response.status}`);
-  }
+async function ensureDatabase() {
+  await mkdir(path.dirname(DB_PATH), { recursive: true });
 
-  const [result] = await response.json();
-  if (result.error) {
-    throw new Error(result.error);
-  }
-  return result.result;
-}
-
-export async function readGame(id) {
-  return readValue(`game:${id}`);
-}
-
-export async function writeGame(game) {
-  await writeValue(`game:${game.id}`, game, 60 * 60 * 24);
-  return game;
-}
-
-export async function readValue(key) {
-  if (!key) {
-    return null;
-  }
-
-  if (hasKv()) {
-    const value = await kv("get", key);
-    return value ? JSON.parse(value) : null;
-  }
-
-  const item = memoryStore.get(key);
-  if (!item) {
-    return null;
-  }
-
-  if (item.expiresAt && item.expiresAt <= Date.now()) {
-    memoryStore.delete(key);
-    return null;
-  }
-
-  return item.value;
-}
-
-export async function writeValue(key, value, ttlSeconds) {
-  if (hasKv()) {
-    const args = ["set", key, JSON.stringify(value)];
-    if (ttlSeconds) {
-      args.push("ex", ttlSeconds);
+  try {
+    await readFile(DB_PATH, "utf8");
+  } catch (error) {
+    if (error.code !== "ENOENT") {
+      throw error;
     }
-    await kv(...args);
-    return value;
+    await writeFile(DB_PATH, `${JSON.stringify(seed, null, 2)}\n`);
   }
-
-  memoryStore.set(key, {
-    value,
-    expiresAt: ttlSeconds ? Date.now() + ttlSeconds * 1000 : null,
-  });
-  return value;
 }
 
-export async function deleteValue(key) {
-  if (hasKv()) {
-    await kv("del", key);
-    return;
-  }
+function normalizeDatabase(data) {
+  return {
+    users: Array.isArray(data.users) ? data.users : [],
+    sessions: Array.isArray(data.sessions) ? data.sessions : [],
+    verifications: Array.isArray(data.verifications) ? data.verifications : [],
+    conversations: Array.isArray(data.conversations) ? data.conversations : [],
+    messages: Array.isArray(data.messages) ? data.messages : [],
+  };
+}
 
-  memoryStore.delete(key);
+async function readDatabase() {
+  await ensureDatabase();
+  const file = await readFile(DB_PATH, "utf8");
+  return normalizeDatabase(JSON.parse(file || "{}"));
+}
+
+async function writeDatabase(data) {
+  await ensureDatabase();
+  await writeFile(DB_PATH, `${JSON.stringify(normalizeDatabase(data), null, 2)}\n`);
+  return data;
+}
+
+export async function readDb() {
+  return readDatabase();
+}
+
+export async function updateDb(mutator) {
+  writeQueue = writeQueue.then(async () => {
+    const db = await readDatabase();
+    const result = await mutator(db);
+    await writeDatabase(db);
+    return result;
+  });
+
+  return writeQueue;
+}
+
+export function withoutExpired(records) {
+  const now = Date.now();
+  return records.filter((record) => !record.expiresAt || Date.parse(record.expiresAt) > now);
 }

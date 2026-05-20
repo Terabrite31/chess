@@ -4,11 +4,12 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "node:crypto";
-import { deleteValue, readValue, writeValue } from "./_store.js";
+import { readDb, updateDb, withoutExpired } from "./_store.js";
 
 const SESSION_TTL = 60 * 60 * 24 * 7;
 const VERIFY_TTL = 60 * 60 * 24;
 const PASSWORD_ITERATIONS = 210000;
+const COOKIE_NAME = "signaldesk_session";
 
 function send(response, status, body) {
   response.status(status).json(body);
@@ -22,8 +23,8 @@ function normalizeEmail(email) {
   return String(email ?? "").trim().toLowerCase();
 }
 
-function userKey(email) {
-  return `user:${email}`;
+function displayNameFromEmail(email) {
+  return email.split("@")[0].replace(/[._-]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function publicUser(user) {
@@ -34,7 +35,10 @@ function publicUser(user) {
   return {
     id: user.id,
     email: user.email,
+    name: user.name,
+    title: user.title,
     verified: Boolean(user.verified),
+    createdAt: user.createdAt,
   };
 }
 
@@ -69,21 +73,28 @@ function secureCookie(request) {
 
 function sessionCookie(request, value, maxAge = SESSION_TTL) {
   const secure = secureCookie(request) ? "; Secure" : "";
-  return `chess_session=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`;
+  return `${COOKIE_NAME}=${value}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${maxAge}${secure}`;
+}
+
+async function findUserByEmail(email) {
+  const db = await readDb();
+  return db.users.find((user) => user.email === email) ?? null;
 }
 
 async function currentUser(request) {
-  const sessionToken = cookieValue(request, "chess_session");
+  const sessionToken = cookieValue(request, COOKIE_NAME);
   if (!sessionToken) {
     return null;
   }
 
-  const session = await readValue(`session:${sessionToken}`);
+  const db = await readDb();
+  const sessions = withoutExpired(db.sessions);
+  const session = sessions.find((item) => item.token === sessionToken);
   if (!session) {
     return null;
   }
 
-  const user = await readValue(userKey(session.email));
+  const user = db.users.find((item) => item.id === session.userId);
   return user?.verified ? user : null;
 }
 
@@ -105,26 +116,31 @@ function verifyUrl(request, verifyToken) {
 async function sendVerificationEmail(request, user) {
   const verifyToken = token();
   const verificationUrl = verifyUrl(request, verifyToken);
-  await writeValue(`verify:${verifyToken}`, { email: user.email }, VERIFY_TTL);
+  const expiresAt = new Date(Date.now() + VERIFY_TTL * 1000).toISOString();
+
+  await updateDb((db) => {
+    db.verifications = withoutExpired(db.verifications).filter((item) => item.userId !== user.id);
+    db.verifications.push({ token: verifyToken, userId: user.id, expiresAt });
+  });
 
   if (!process.env.RESEND_API_KEY) {
     return { sent: false, verificationUrl };
   }
 
-  const from = process.env.EMAIL_FROM ?? "Chess <onboarding@resend.dev>";
+  const from = process.env.EMAIL_FROM ?? "SignalDesk <onboarding@resend.dev>";
   const response = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
       Authorization: `Bearer ${process.env.RESEND_API_KEY}`,
       "Content-Type": "application/json",
-      "User-Agent": "chess-auth/1.0",
+      "User-Agent": "signaldesk-auth/1.0",
     },
     body: JSON.stringify({
       from,
       to: user.email,
-      subject: "Verify your Chess account",
-      html: `<p>Verify your Chess account by opening this link:</p><p><a href="${verificationUrl}">${verificationUrl}</a></p><p>This link expires in 24 hours.</p>`,
-      text: `Verify your Chess account: ${verificationUrl}\n\nThis link expires in 24 hours.`,
+      subject: "Verify your SignalDesk account",
+      html: `<p>Verify your SignalDesk account by opening this link:</p><p><a href="${verificationUrl}">${verificationUrl}</a></p><p>This link expires in 24 hours.</p>`,
+      text: `Verify your SignalDesk account: ${verificationUrl}\n\nThis link expires in 24 hours.`,
     }),
   });
 
@@ -144,6 +160,7 @@ function emailId(email) {
 async function handleRegister(request, response) {
   const email = normalizeEmail(request.body?.email);
   const password = String(request.body?.password ?? "");
+  const name = String(request.body?.name ?? "").trim() || displayNameFromEmail(email);
 
   if (!email.includes("@") || email.length > 254) {
     send(response, 400, { error: "Enter a valid email address." });
@@ -155,7 +172,7 @@ async function handleRegister(request, response) {
     return;
   }
 
-  const existingUser = await readValue(userKey(email));
+  const existingUser = await findUserByEmail(email);
   if (existingUser?.verified) {
     send(response, 409, { error: "That email is already registered." });
     return;
@@ -165,13 +182,19 @@ async function handleRegister(request, response) {
   const user = {
     id: existingUser?.id ?? emailId(email),
     email,
+    name: name.slice(0, 80),
+    title: "Team member",
     passwordHash: hashPassword(password),
     verified: false,
     createdAt: existingUser?.createdAt ?? now,
     updatedAt: now,
   };
 
-  await writeValue(userKey(email), user);
+  await updateDb((db) => {
+    db.users = db.users.filter((item) => item.email !== email);
+    db.users.push(user);
+  });
+
   const emailResult = await sendVerificationEmail(request, user);
 
   send(response, 201, {
@@ -185,30 +208,37 @@ async function handleRegister(request, response) {
 
 async function handleVerify(request, response) {
   const verifyToken = String(request.body?.token ?? request.query.token ?? "");
-  const verification = await readValue(`verify:${verifyToken}`);
-  if (!verification) {
-    send(response, 400, { error: "Verification link is invalid or expired." });
+
+  const result = await updateDb((db) => {
+    db.verifications = withoutExpired(db.verifications);
+    const verification = db.verifications.find((item) => item.token === verifyToken);
+    if (!verification) {
+      return { error: "Verification link is invalid or expired.", status: 400 };
+    }
+
+    const user = db.users.find((item) => item.id === verification.userId);
+    if (!user) {
+      return { error: "Account not found.", status: 404 };
+    }
+
+    user.verified = true;
+    user.updatedAt = new Date().toISOString();
+    db.verifications = db.verifications.filter((item) => item.token !== verifyToken);
+    return { user };
+  });
+
+  if (result.error) {
+    send(response, result.status, { error: result.error });
     return;
   }
 
-  const user = await readValue(userKey(verification.email));
-  if (!user) {
-    send(response, 404, { error: "Account not found." });
-    return;
-  }
-
-  user.verified = true;
-  user.updatedAt = new Date().toISOString();
-  await writeValue(userKey(user.email), user);
-  await deleteValue(`verify:${verifyToken}`);
-
-  send(response, 200, { user: publicUser(user), message: "Email verified. You can now sign in." });
+  send(response, 200, { user: publicUser(result.user), message: "Email verified. You can now sign in." });
 }
 
 async function handleLogin(request, response) {
   const email = normalizeEmail(request.body?.email);
   const password = String(request.body?.password ?? "");
-  const user = await readValue(userKey(email));
+  const user = await findUserByEmail(email);
 
   if (!user || !verifyPassword(password, user.passwordHash)) {
     send(response, 401, { error: "Invalid email or password." });
@@ -221,15 +251,26 @@ async function handleLogin(request, response) {
   }
 
   const sessionToken = token();
-  await writeValue(`session:${sessionToken}`, { email: user.email }, SESSION_TTL);
+  await updateDb((db) => {
+    db.sessions = withoutExpired(db.sessions);
+    db.sessions.push({
+      token: sessionToken,
+      userId: user.id,
+      createdAt: new Date().toISOString(),
+      expiresAt: new Date(Date.now() + SESSION_TTL * 1000).toISOString(),
+    });
+  });
+
   response.setHeader("Set-Cookie", sessionCookie(request, sessionToken));
   send(response, 200, { user: publicUser(user) });
 }
 
 async function handleLogout(request, response) {
-  const sessionToken = cookieValue(request, "chess_session");
+  const sessionToken = cookieValue(request, COOKIE_NAME);
   if (sessionToken) {
-    await deleteValue(`session:${sessionToken}`);
+    await updateDb((db) => {
+      db.sessions = db.sessions.filter((session) => session.token !== sessionToken);
+    });
   }
 
   response.setHeader("Set-Cookie", sessionCookie(request, "", 0));
@@ -238,7 +279,7 @@ async function handleLogout(request, response) {
 
 async function handleResend(request, response) {
   const email = normalizeEmail(request.body?.email);
-  const user = await readValue(userKey(email));
+  const user = await findUserByEmail(email);
   if (!user) {
     send(response, 404, { error: "Account not found." });
     return;
@@ -256,7 +297,7 @@ async function handleResend(request, response) {
   });
 }
 
-export { currentUser };
+export { currentUser, publicUser };
 
 export default async function handler(request, response) {
   try {

@@ -1,25 +1,40 @@
-# Chess
+# SignalDesk Messaging
 
-A browser chess board with Vercel serverless multiplayer.
+A high-level messaging website with account verification, persistent conversations, teammate search, unread counts, and a local JSON database.
 
-## Multiplayer
+## Run locally
 
-Click **Create room**, then **Copy link** and send that link to the other player. The first browser is White and the invited browser joins as Black. Moves are validated by `/api/games` and synced with short polling.
+```sh
+npm run dev
+```
 
-For production persistence, add Vercel KV to the project so these environment variables exist:
+Open `http://localhost:3000`.
 
-- `KV_REST_API_URL`
-- `KV_REST_API_TOKEN`
+The app stores development data in `data/signaldesk-db.json`. Registration works without external setup: if `RESEND_API_KEY` is not set, the app shows a dev verification link directly after account creation.
 
-Without KV, the API falls back to in-memory storage, which is useful for local testing but can reset when a Vercel serverless function instance is replaced.
+## Optional Resend email setup
 
-## Accounts
+Create a `.env` file or set these environment variables before running the server:
 
-Online rooms require a verified account. Registration sends a verification email through Resend when these environment variables exist:
+```sh
+AUTH_SECRET="replace-with-a-long-random-string"
+APP_URL="http://localhost:3000"
+RESEND_API_KEY="re_..."
+EMAIL_FROM="SignalDesk <verify@yourdomain.com>"
+DB_PATH="./data/signaldesk-db.json"
+```
 
-- `AUTH_SECRET`: a long random secret used for stable account ids and cookies
-- `APP_URL`: the deployed site URL, for example `https://your-app.vercel.app`
-- `RESEND_API_KEY`: your Resend API key
-- `EMAIL_FROM`: the verified sender, for example `Chess <verify@yourdomain.com>`
+`EMAIL_FROM` must be a sender/domain verified in Resend. Without `RESEND_API_KEY`, verification links are returned in the browser for local development.
 
-If `RESEND_API_KEY` is missing, registration uses dev mode and returns the verification link in the app instead of sending email.
+## API
+
+- `POST /api/auth?action=register`
+- `POST /api/auth?action=login`
+- `POST /api/auth?action=logout`
+- `POST /api/auth?action=resend`
+- `GET /api/auth?action=me`
+- `GET /api/messages`
+- `GET /api/messages?action=directory&q=term`
+- `GET /api/messages?action=thread&id=convo_id`
+- `POST /api/messages?action=create`
+- `POST /api/messages?action=send`
